@@ -126,3 +126,6 @@
         body: "{{ lookup('file', 'elk/kibana-index-pattern.json') }}"
         body_format: json
       when: index_pattern_create is defined and index_pattern_create
+
+      collections:
+    - kubernetes.core
