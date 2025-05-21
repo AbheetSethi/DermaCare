@@ -2,86 +2,58 @@
   hosts: localhost
   gather_facts: false
   vars_files:
-    - vault/secrets.yml 
-    
-  collections:
-    - kubernetes.core
+    - vault/secrets.yml
 
   tasks:
     - name: Render backend deployment template with secrets
       template:
         src: manifests/backend-deployment.yaml.j2
-        dest: /tmp/backend-deployment.yaml
+        dest: "{{ playbook_dir }}/../k8s/backend-deployment.yaml"
 
-    - name: Deploy backend using kubectl
-      shell: kubectl apply -f backend-deployment.yaml --kubeconfig /path/to/kubeconfig
+    - name: Apply backend deployment manifest
+      shell: kubectl apply -f backend-deployment.yaml --kubeconfig /absolute/path/to/kubeconfig
       args:
         chdir: "{{ playbook_dir }}/../k8s"
-        
-    # - name: Deploy backend
-    #   kubernetes.core.k8s:
-    #     state: present
-    #     src: manifests/backend-deployment.yaml
-
-    - name: Apply manifests with kubectl in Docker
-      shell: >
-        docker run --rm -v $(pwd)/../k8s:/manifests -v $HOME/.kube/config:/root/.kube/config
-        bitnami/kubectl:latest apply -f /manifests/backend-deployment.yaml
 
     - name: Expose backend
-      shell: kubectl apply -f manifests/backend-service.yaml --kubeconfig /path/to/kubeconfig
+      shell: kubectl apply -f manifests/backend-service.yaml --kubeconfig /absolute/path/to/kubeconfig
       args:
         chdir: "{{ playbook_dir }}"
 
     - name: Deploy ml-service
-      shell: kubectl apply -f manifests/ml-deployment.yaml --kubeconfig /path/to/kubeconfig
+      shell: kubectl apply -f manifests/ml-deployment.yaml --kubeconfig /absolute/path/to/kubeconfig
       args:
         chdir: "{{ playbook_dir }}"
 
     - name: Expose ml-service
-      shell: kubectl apply -f manifests/ml-service.yaml --kubeconfig /path/to/kubeconfig
+      shell: kubectl apply -f manifests/ml-service.yaml --kubeconfig /absolute/path/to/kubeconfig
       args:
         chdir: "{{ playbook_dir }}"
 
     - name: Deploy frontend
-      shell: kubectl apply -f manifests/frontend-deployment.yaml --kubeconfig /path/to/kubeconfig
+      shell: kubectl apply -f manifests/frontend-deployment.yaml --kubeconfig /absolute/path/to/kubeconfig
       args:
         chdir: "{{ playbook_dir }}"
 
     - name: Expose frontend
-      shell: kubectl apply -f manifests/frontend-service.yaml --kubeconfig /path/to/kubeconfig
+      shell: kubectl apply -f manifests/frontend-service.yaml --kubeconfig /absolute/path/to/kubeconfig
       args:
         chdir: "{{ playbook_dir }}"
 
     - name: Apply backend HPA
-      shell: kubectl apply -f manifests/backend-hpa.yaml --kubeconfig /path/to/kubeconfig
+      shell: kubectl apply -f manifests/backend-hpa.yaml --kubeconfig /absolute/path/to/kubeconfig
       args:
         chdir: "{{ playbook_dir }}"
 
     - name: Apply ml-service HPA
-      shell: kubectl apply -f manifests/ml-service-hpa.yaml --kubeconfig /path/to/kubeconfig
+      shell: kubectl apply -f manifests/ml-service-hpa.yaml --kubeconfig /absolute/path/to/kubeconfig
       args:
         chdir: "{{ playbook_dir }}"
 
     - name: Apply frontend HPA
-      shell: kubectl apply -f manifests/frontend-hpa.yaml --kubeconfig /path/to/kubeconfig
+      shell: kubectl apply -f manifests/frontend-hpa.yaml --kubeconfig /absolute/path/to/kubeconfig
       args:
         chdir: "{{ playbook_dir }}"
-
-    # - name: Port forward backend service
-    #   ansible.builtin.shell: kubectl port-forward service/backend 5000:5000 &
-    #   async: 3600
-    #   poll: 0
-
-    # - name: Port forward frontend service
-    #   ansible.builtin.shell: kubectl port-forward service/frontend 3000:3000 &
-    #   async: 3600
-    #   poll: 0
-
-    # - name: Port forward ml-service service
-    #   ansible.builtin.shell: kubectl port-forward service/ml-service 5001:5001 &
-    #   async: 3600
-    #   poll: 0
 
     # ------------------------------------
     # ELK Stack Setup for Log Integration
@@ -126,6 +98,3 @@
         body: "{{ lookup('file', 'elk/kibana-index-pattern.json') }}"
         body_format: json
       when: index_pattern_create is defined and index_pattern_create
-
-      collections:
-    - kubernetes.core
