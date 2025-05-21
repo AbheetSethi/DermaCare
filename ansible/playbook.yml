@@ -23,6 +23,11 @@
     #     state: present
     #     src: manifests/backend-deployment.yaml
 
+    - name: Apply manifests with kubectl in Docker
+      shell: >
+        docker run --rm -v $(pwd)/../k8s:/manifests -v $HOME/.kube/config:/root/.kube/config
+        bitnami/kubectl:latest apply -f /manifests/backend-deployment.yaml
+        
     - name: Expose backend
       kubernetes.core.k8s:
         state: present
