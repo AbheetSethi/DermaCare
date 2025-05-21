@@ -13,10 +13,10 @@
         src: manifests/backend-deployment.yaml.j2
         dest: /tmp/backend-deployment.yaml
 
-    - name: Deploy backend
-      kubernetes.core.k8s:
-        state: present
-        src: /tmp/backend-deployment.yaml
+    - name: Deploy backend using kubectl
+      shell: kubectl apply -f backend-deployment.yaml --kubeconfig /path/to/kubeconfig
+      args:
+        chdir: "{{ playbook_dir }}/../k8s"
         
     # - name: Deploy backend
     #   kubernetes.core.k8s:
@@ -63,7 +63,6 @@
         state: present
         src: manifests/frontend-hpa.yaml
 
-
     # - name: Port forward backend service
     #   ansible.builtin.shell: kubectl port-forward service/backend 5000:5000 &
     #   async: 3600
@@ -78,3 +77,47 @@
     #   ansible.builtin.shell: kubectl port-forward service/ml-service 5001:5001 &
     #   async: 3600
     #   poll: 0
+
+    # ------------------------------------
+    # ELK Stack Setup for Log Integration
+    # ------------------------------------
+
+    - name: Copy Logstash config
+      ansible.builtin.copy:
+        src: elk/logstash.conf
+        dest: /etc/logstash/conf.d/logstash.conf
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Restart Logstash
+      ansible.builtin.systemd:
+        name: logstash
+        state: restarted
+        enabled: true
+
+    - name: Wait for Logstash to be ready
+      ansible.builtin.wait_for:
+        port: 5044
+        timeout: 30
+        state: started
+
+    - name: Import Kibana dashboard (optional)
+      ansible.builtin.uri:
+        url: "http://localhost:5601/api/saved_objects/_import?overwrite=true"
+        method: POST
+        headers:
+          kbn-xsrf: "true"
+        body: "{{ lookup('file', 'elk/dashboard.ndjson') }}"
+        body_format: raw
+      when: dashboard_import is defined and dashboard_import
+
+    - name: Create Kibana index pattern (optional)
+      ansible.builtin.uri:
+        url: "http://localhost:5601/api/saved_objects/index-pattern/backend-logs"
+        method: POST
+        headers:
+          kbn-xsrf: "true"
+        body: "{{ lookup('file', 'elk/kibana-index-pattern.json') }}"
+        body_format: json
+      when: index_pattern_create is defined and index_pattern_create

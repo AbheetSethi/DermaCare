@@ -7,6 +7,7 @@ import base64
 import os
 from bson import ObjectId
 import requests
+import logging
 from io import BytesIO
 
 from cred import url
@@ -61,6 +62,14 @@ if counter_collection.count_documents({"_id": "user_pid"}) == 0:
 if counter_collection.count_documents({"_id": "patient_id"}) == 0:
     counter_collection.insert_one({"_id": "patient_id", "seq": 1000})
 
+
+# Set up logging
+logging.basicConfig(
+    filename='app.log',           # <--- This is the log file
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s: %(message)s'
+)
+
 # Auto-increment functions
 def get_next_user_pid():
     counter = counter_collection.find_one_and_update(
@@ -80,11 +89,13 @@ def register():
     name = data.get('name')
 
     if not all([username, password, email, name]):
+        logging.warning("Registration failed: Missing fields")
         return jsonify({"error": "All fields (username, password, email, name) are required"}), 400
 
     # Check if user already exists in MongoDB
     existing_user = user_collection.find_one({"username": username})
     if existing_user:
+        logging.warning(f"Registration failed: User {username} already exists")
         return jsonify({"error": "User already exists"}), 409
 
     # Encrypt the password
@@ -103,8 +114,13 @@ def register():
         "pid": pid  # Store PID as int or string as you prefer
     }
 
-    # Insert into MongoDB
-    user_collection.insert_one(document)
+    try:
+        # Insert into MongoDB
+        user_collection.insert_one(document)
+        logging.info(f"User registered: {username} with PID {pid}")
+    except Exception as e:
+        logging.error(f"Database insert failed for {username}: {str(e)}")
+
 
     return jsonify({"message": f"User {username} registered successfully", "pid": pid}), 201
 
@@ -116,11 +132,13 @@ def login():
     password = data.get('password')
 
     if not username or not password:
+        logging.warning("Login failed: Missing username or password")
         return jsonify({"error": "Username and password are required"}), 400
 
     # Doctor login
     if username == "doctor" and password == "doctor123":
-        access_token = create_access_token(identity="doctor",additional_claims={"role": "doctor"})
+        access_token = create_access_token(identity="doctor", additional_claims={"role": "doctor"})
+        logging.info("Doctor login successful")
         return jsonify({
             "message": "Doctor authenticated",
             "role": "doctor",
@@ -130,15 +148,18 @@ def login():
     # Patient login
     user = user_collection.find_one({"username": username})
     if not user:
+        logging.warning(f"Login failed: Username not found - {username}")
         return jsonify({"error": "Username not found"}), 404
 
     try:
         decrypted_password = decrypt_data(user["password"])
     except Exception as e:
+        logging.error(f"Login failed: Password decryption error for user {username}: {str(e)}")
         return jsonify({"error": "Password decryption failed"}), 500
 
     if password == decrypted_password:
         access_token = create_access_token(identity=str(user["pid"]), additional_claims={"username": username, "role": "patient"})
+        logging.info(f"Login successful for user: {username}")
         return jsonify({
             "message": "Verification successful",
             "pid": user["pid"],
@@ -146,8 +167,8 @@ def login():
             "token": access_token
         }), 200
     else:
+        logging.warning(f"Login failed: Wrong password for user {username}")
         return jsonify({"error": "Wrong password"}), 401
-
 
 # Upload data
 @app.route('/upload_data/<pid>', methods=['POST'])
@@ -156,14 +177,13 @@ def upload_data(pid):
         # Get data from form (request.form)
         date = request.form.get('date')
         prediction = request.form.get('mlDiagnosis')
-        # doctor_diagnosis = request.form.get('doctorDiagnosis')
         status = request.form.get('status')
         p_comment = request.form.get('patientComments')
-        # d_comment = request.form.get('doctorComments')
         image = request.files.get('image')
 
-        # if not all([date, prediction, doctor_diagnosis, status, p_comment, d_comment, image]):
-        #     return jsonify({"error": "All fields are required"}), 400
+        if not all([date, prediction, status, p_comment, image]):
+            logging.warning(f"Upload failed: Missing fields for patient {pid}")
+            return jsonify({"error": "All required fields are missing"}), 400
 
         # Convert image to base64
         image_data = base64.b64encode(image.read()).decode("utf-8")
@@ -175,18 +195,19 @@ def upload_data(pid):
             "mlDiagnosis": prediction,
             "doctorDiagnosis": None,
             "status": status,
-            "patientComments" :p_comment,
+            "patientComments": p_comment,
             "doctorComments": None,
             "imagePath": image_data
         }
 
         # Save to database
         diagnosis_result_collection.insert_one(document)
+        logging.info(f"Data uploaded for patient {pid} on {date}")
 
-        # Return only the success message
         return jsonify({"message": "data uploaded successfully"}), 201
 
     except Exception as e:
+        logging.error(f"Upload failed for patient {pid}: {str(e)}")
         return jsonify({"error": f"Failed to upload data: {str(e)}"}), 500
 
 # Data of given patient
@@ -198,6 +219,7 @@ def get_data(pid):
     claims = get_jwt()              # This will be a dict with "role"
 
     if claims.get("role") != "patient" or token_pid != pid:
+        logging.warning(f"Unauthorized data access attempt by PID {token_pid} for PID {pid}")
         return jsonify({"error": "Unauthorized"}), 403
 
     try:
@@ -219,13 +241,15 @@ def get_data(pid):
             })
 
         if records:
+            logging.info(f"Data retrieved for patient {pid}, count={len(records)}")
             return jsonify({"data": records}), 200
         else:
+            logging.warning(f"No records found for patient {pid}")
             return jsonify({"error": "No records found for this patient"}), 404
 
     except Exception as e:
+        logging.error(f"Error retrieving data for patient {pid}: {str(e)}")
         return jsonify({"error": f"Failed to retrieve data: {str(e)}"}), 500
-
     
 # Data of all patient
 @app.route('/get_patient_data', methods=['GET'])
@@ -247,15 +271,18 @@ def get_patient_data():
             })
 
         if records:
+            logging.info(f"Retrieved all patient data, count={len(records)}")
             response = {
                 "data": records
             }
             return jsonify(response), 200
         else:
+            logging.warning("No patient data found in the system")
             return jsonify({"error": "No records found"}), 404
 
     except Exception as e:
-        return jsonify({"error": f"Failed to retrieve data: {str(e)}"}), 500      
+        logging.error(f"Failed to retrieve all patient data: {str(e)}")
+        return jsonify({"error": f"Failed to retrieve data: {str(e)}"}), 500     
  
 @app.route("/create-request", methods=["POST"])
 def create_request():
@@ -268,11 +295,13 @@ def create_request():
         print("comments:", comments)
         if not image_file:
             print("Image not found")
+            logging.warning("Image upload failed: file not found")
             return jsonify({"error": "Image file is required"}), 400
 
         image_content = image_file.read()
         if not image_content:
             print("Image content is empty")
+            logging.warning("Image upload failed: content is empty")
             return jsonify({"error": "Image file is empty"}), 400
 
         image_data = base64.b64encode(image_content).decode("utf-8")
@@ -281,11 +310,11 @@ def create_request():
 
         files = {"image": (image_file.filename, image_file_io, image_file.content_type)}
         print("Sending image to ML service...")
+        logging.info(f"Sending image for prediction for patient_id={patient_id}")
 
         # ml_response = requests.post("http://127.0.0.1:5001/predict", files=files)
         # ml_response = requests.post("http://ml-service:5001/predict", files=files)
         ml_response = requests.post(ml_service_url, files=files)
-        
         
         print("ML service response status:", ml_response.status_code)
 
@@ -293,10 +322,12 @@ def create_request():
             ml_data = ml_response.json()
         except ValueError:
             print("Invalid JSON from ML service:", ml_response.text)
+            logging.error("Failed to parse ML service response JSON")
             return jsonify({"error": "Invalid response from ML service"}), 500
 
         ml_diagnosis = ml_data.get("predicted_class", "Unknown")
         print("Diagnosis from ML:", ml_diagnosis)
+        logging.info(f"ML diagnosis result for patient_id={patient_id}: {ml_diagnosis}")
 
         date = datetime.now().strftime("%Y-%m-%d")
         new_entry = {
@@ -312,13 +343,14 @@ def create_request():
 
         print("Inserting into MongoDB:", new_entry)
         request_collection.insert_one(new_entry)
+        logging.info(f"Created request for patient_id={patient_id} on {date}")
 
         return jsonify({"message": "Request created successfully"}), 200
 
     except Exception as e:
         print(f"Error: {e}")
+        logging.error(f"Exception in create-request: {str(e)}")
         return jsonify({"error": str(e)}), 500
-
     
 # ========== DOCTOR ENDPOINTS ==========
 # @app.route('/doctor-verify', methods=['POST'])
@@ -336,10 +368,12 @@ def get_pending_requests():
     claims = get_jwt()             # dict with "role"
 
     if claims.get("role") != "doctor":
+        logging.warning(f"Unauthorized access attempt by identity={identity}")
         return jsonify({"error": "Unauthorized"}), 403
 
     try:
         # Fetch requests with status "Pending" from the MongoDB collection
+        logging.info(f"Doctor {identity} fetching pending requests")
         pending_requests = request_collection.find({"status": "Pending"})
 
         results = []
@@ -354,9 +388,11 @@ def get_pending_requests():
                 "imagePath": request.get("imagePath")
             })
 
+        logging.info(f"Retrieved {len(results)} pending requests for doctor {identity}")
         return jsonify({"data": results}), 200
 
     except Exception as e:
+        logging.error(f"Failed to retrieve pending requests: {str(e)}")
         return jsonify({"error": f"Failed to retrieve pending requests: {str(e)}"}), 500
 
 
@@ -367,15 +403,16 @@ def update_diagnosis():
     claims = get_jwt()             # dict with "role"
 
     if claims.get("role") != "doctor":
+        logging.warning(f"Unauthorized attempt to update diagnosis by identity={identity}")
         return jsonify({"error": "Unauthorized"}), 403
 
     try:
         data = request.json
-        print(data)
+        logging.info(f"Received update request from doctor {identity}: {data}")
 
         _id = ObjectId(data['appointment_id'])
 
-        request_collection.update_one(
+        update_result = request_collection.update_one(
             {"_id": _id},
             {
                 "$set": {
@@ -386,12 +423,17 @@ def update_diagnosis():
             }
         )
 
+        if update_result.modified_count > 0:
+            logging.info(f"Diagnosis updated by doctor {identity} for appointment {_id}")
+        else:
+            logging.warning(f"No document updated for appointment {_id} by doctor {identity}")
+
         return jsonify({"message": "Diagnosis updated"}), 200
 
     except Exception as e:
+        logging.error(f"Error while updating diagnosis: {str(e)}")
         return jsonify({"error": str(e)}), 500
-
-
+    
 # Run the app
 # if __name__ == '__main__':
 #     app.run(debug=True)
